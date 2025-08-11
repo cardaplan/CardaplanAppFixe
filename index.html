@@ -104,18 +104,58 @@
                     return names;
                 }
 
+                async function loadNeighborhoodNamesFromCSV() {
+                    if (window.__neighborhoodNamesCache && Array.isArray(window.__neighborhoodNamesCache)) {
+                        return window.__neighborhoodNamesCache;
+                    }
+                    try {
+                        if (typeof loadCSVData === 'function') {
+                            const data = await loadCSVData(NEIGHBORHOODS_CSV_URL);
+                            let firstKey = null;
+                            for (const row of data) {
+                                const keys = Object.keys(row || {});
+                                if (keys && keys.length) { firstKey = keys[0]; break; }
+                            }
+                            const names = Array.from(new Set(
+                                data.map(r => ((firstKey ? r[firstKey] : '') || '').toString().trim()).filter(Boolean)
+                            ));
+                            names.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+                            window.__neighborhoodNamesCache = names;
+                            return names;
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                    return null;
+                }
+
                 function ensureNeighborhoodSelects() {
-                    const inputCepNeighborhood = document.getElementById('neighborhood');
-                    if (inputCepNeighborhood && !document.getElementById('neighborhood-select')) {
+                    const isLocked = typeof LOCAL_LOCK_ENABLED !== 'undefined' ? !!LOCAL_LOCK_ENABLED : false;
+
+                    const inputCepNeighborhood = document.getElementById('neighborhood') || document.getElementById('bairro');
+                    const inputManualNeighborhood = document.getElementById('manual-neighborhood') || document.getElementById('manual-bairro');
+
+                    const selCepExisting = document.getElementById('neighborhood-select') || document.getElementById('bairro-select');
+                    const selManualExisting = document.getElementById('manual-neighborhood-select') || document.getElementById('manual-bairro-select');
+
+                    if (!isLocked) {
+                        if (inputCepNeighborhood) inputCepNeighborhood.style.display = '';
+                        if (selCepExisting) selCepExisting.remove();
+                        if (inputManualNeighborhood) inputManualNeighborhood.style.display = '';
+                        if (selManualExisting) selManualExisting.remove();
+                        return;
+                    }
+
+                    if (inputCepNeighborhood && !selCepExisting) {
                         const select = document.createElement('select');
-                        select.id = 'neighborhood-select';
+                        select.id = (inputCepNeighborhood.id === 'bairro') ? 'bairro-select' : 'neighborhood-select';
                         select.className = inputCepNeighborhood.className;
                         select.setAttribute('aria-label', 'Bairro');
                         select.addEventListener('change', function(e) {
                             const value = e.target.value;
                             inputCepNeighborhood.value = value;
                             if (typeof updateAddressData === 'function') updateAddressData();
-                            if (typeof clearFieldError === 'function') clearFieldError('neighborhood');
+                            if (typeof clearFieldError === 'function') clearFieldError(inputCepNeighborhood.id);
                             if (typeof buscarTaxaPorBairroRedundante === 'function') buscarTaxaPorBairroRedundante(value, true);
                             if (typeof updateContinueButton === 'function') updateContinueButton();
                             if (typeof hideNeighborhoodAutocomplete === 'function') hideNeighborhoodAutocomplete();
@@ -124,10 +164,9 @@
                         inputCepNeighborhood.parentNode.insertBefore(select, inputCepNeighborhood.nextSibling);
                     }
 
-                    const inputManualNeighborhood = document.getElementById('manual-neighborhood');
-                    if (inputManualNeighborhood && !document.getElementById('manual-neighborhood-select')) {
+                    if (inputManualNeighborhood && !selManualExisting) {
                         const select = document.createElement('select');
-                        select.id = 'manual-neighborhood-select';
+                        select.id = (inputManualNeighborhood.id === 'manual-bairro') ? 'manual-bairro-select' : 'manual-neighborhood-select';
                         select.className = inputManualNeighborhood.className;
                         select.setAttribute('aria-label', 'Bairro');
                         select.addEventListener('change', function(e) {
@@ -135,7 +174,7 @@
                             inputManualNeighborhood.value = value;
                             if (typeof updateManualAddressData === 'function') updateManualAddressData();
                             if (typeof searchNeighborhoodFee === 'function') searchNeighborhoodFee();
-                            if (typeof clearFieldError === 'function') clearFieldError('manual-neighborhood');
+                            if (typeof clearFieldError === 'function') clearFieldError(inputManualNeighborhood.id);
                             if (typeof updateContinueButton === 'function') updateContinueButton();
                         });
                         inputManualNeighborhood.style.display = 'none';
@@ -144,21 +183,47 @@
                 }
 
                 function tryPopulateNeighborhoodSelects() {
-                    const names = extractNeighborhoodNames();
-                    if (!names) return false;
+                    const namesLocal = extractNeighborhoodNames();
                     const selCep = document.getElementById('neighborhood-select');
                     const selManual = document.getElementById('manual-neighborhood-select');
-                    if (selCep) populateSelectOptions(selCep, names);
-                    if (selManual) populateSelectOptions(selManual, names);
+
+                    if (namesLocal && namesLocal.length) {
+                        if (selCep) populateSelectOptions(selCep, namesLocal);
+                        if (selManual) populateSelectOptions(selManual, namesLocal);
+                        return !!(selCep || selManual);
+                    }
+
+                    // Fallback: load directly from CSV if not yet in memory
+                    loadNeighborhoodNamesFromCSV().then(names => {
+                        if (!names || !names.length) return;
+                        if (selCep) populateSelectOptions(selCep, names);
+                        if (selManual) populateSelectOptions(selManual, names);
+                    }).catch(() => {});
+
                     return !!(selCep || selManual);
                 }
 
                 function applyFixedLocal() {
                     const cepEl = document.getElementById('cep');
-                    const cityEl = document.getElementById('city');
-                    const manualCityEl = document.getElementById('manual-city');
+                    const cityEl = document.getElementById('city') || document.getElementById('cidade');
+                    const manualCityEl = document.getElementById('manual-city') || document.getElementById('manual-cidade');
+
+                    function formatCep(value) {
+                        const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
+                        if (digits.length < 8) return digits;
+                        return digits.replace(/^(\d{5})(\d{3})$/, '$1-$2');
+                    }
+
                     if (LOCAL_LOCK_ENABLED) {
-                        if (cepEl) { cepEl.value = (typeof LOCAL_LOCK_CEP !== 'undefined' ? LOCAL_LOCK_CEP : '') || ''; cepEl.readOnly = true; }
+                        if (cepEl) {
+                            const desired = formatCep(typeof LOCAL_LOCK_CEP !== 'undefined' ? LOCAL_LOCK_CEP : '');
+                            if (cepEl.value !== desired) {
+                                cepEl.value = desired;
+                                if (typeof handleCepInput === 'function') handleCepInput();
+                                if (typeof fetchAddress === 'function') fetchAddress();
+                            }
+                            cepEl.readOnly = true;
+                        }
                         if (cityEl) { cityEl.value = (typeof LOCAL_LOCK_CIDADE !== 'undefined' ? LOCAL_LOCK_CIDADE : '') || ''; cityEl.readOnly = true; }
                         if (manualCityEl) { manualCityEl.value = (typeof LOCAL_LOCK_CIDADE !== 'undefined' ? LOCAL_LOCK_CIDADE : '') || ''; manualCityEl.readOnly = true; }
                     } else {
@@ -3130,6 +3195,20 @@
                 const neighborhoodsPromise = (async () => {
                     try {
                         const raw = await loadCSVData(NEIGHBORHOODS_CSV_URL);
+                        // Compute display names (first column) with original casing and cache it
+                        let firstKey = null;
+                        for (const row of raw) {
+                            const keys = Object.keys(row || {});
+                            if (keys && keys.length) { firstKey = keys[0]; break; }
+                        }
+                        if (firstKey) {
+                            const names = Array.from(new Set(
+                                raw.map(r => ((firstKey ? r[firstKey] : '') || '').toString().trim()).filter(Boolean)
+                            ));
+                            names.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+                            window.__neighborhoodNamesCache = names;
+                        }
+                        // Map normalized data for internal search/fees
                         let mapped = raw.map(row => ({
                             bairro: (row.bairro || row.nome_bairro || row.Bairro || row.BAIRRO || '').trim().toLowerCase(),
                             taxa: parseFloat((row.taxa || row.valor_taxa || row.Taxa || row.TAXA || '0').toString().replace(',', '.')) || 0
