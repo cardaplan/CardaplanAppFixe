@@ -61,6 +61,131 @@
             }, 500);
         });
     </script>
+    <script>
+        (function() {
+            document.addEventListener('DOMContentLoaded', function() {
+                if (typeof LOCAL_LOCK_ENABLED === 'undefined') return;
+
+                function populateSelectOptions(selectEl, names) {
+                    if (!selectEl) return;
+                    const current = selectEl.value;
+                    selectEl.innerHTML = '';
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = 'Selecione o bairro';
+                    selectEl.appendChild(placeholder);
+                    names.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        selectEl.appendChild(opt);
+                    });
+                    if (current && names.includes(current)) {
+                        selectEl.value = current;
+                    }
+                }
+
+                function extractNeighborhoodNames() {
+                    let data = [];
+                    if (window.neighborhoodsData && Array.isArray(window.neighborhoodsData) && window.neighborhoodsData.length) {
+                        data = window.neighborhoodsData;
+                    } else if (typeof neighborhoodsData !== 'undefined' && Array.isArray(neighborhoodsData) && neighborhoodsData.length) {
+                        data = neighborhoodsData;
+                    } else {
+                        return null;
+                    }
+                    const names = Array.from(new Set(
+                        data.map(row => {
+                            const name = (row.bairro || row.nome_bairro || row.Bairro || row.BAIRRO || '').toString().trim();
+                            return name;
+                        }).filter(Boolean)
+                    ));
+                    names.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+                    return names;
+                }
+
+                function ensureNeighborhoodSelects() {
+                    const inputCepNeighborhood = document.getElementById('neighborhood');
+                    if (inputCepNeighborhood && !document.getElementById('neighborhood-select')) {
+                        const select = document.createElement('select');
+                        select.id = 'neighborhood-select';
+                        select.className = inputCepNeighborhood.className;
+                        select.setAttribute('aria-label', 'Bairro');
+                        select.addEventListener('change', function(e) {
+                            const value = e.target.value;
+                            inputCepNeighborhood.value = value;
+                            if (typeof updateAddressData === 'function') updateAddressData();
+                            if (typeof clearFieldError === 'function') clearFieldError('neighborhood');
+                            if (typeof buscarTaxaPorBairroRedundante === 'function') buscarTaxaPorBairroRedundante(value, true);
+                            if (typeof updateContinueButton === 'function') updateContinueButton();
+                            if (typeof hideNeighborhoodAutocomplete === 'function') hideNeighborhoodAutocomplete();
+                        });
+                        inputCepNeighborhood.style.display = 'none';
+                        inputCepNeighborhood.parentNode.insertBefore(select, inputCepNeighborhood.nextSibling);
+                    }
+
+                    const inputManualNeighborhood = document.getElementById('manual-neighborhood');
+                    if (inputManualNeighborhood && !document.getElementById('manual-neighborhood-select')) {
+                        const select = document.createElement('select');
+                        select.id = 'manual-neighborhood-select';
+                        select.className = inputManualNeighborhood.className;
+                        select.setAttribute('aria-label', 'Bairro');
+                        select.addEventListener('change', function(e) {
+                            const value = e.target.value;
+                            inputManualNeighborhood.value = value;
+                            if (typeof updateManualAddressData === 'function') updateManualAddressData();
+                            if (typeof searchNeighborhoodFee === 'function') searchNeighborhoodFee();
+                            if (typeof clearFieldError === 'function') clearFieldError('manual-neighborhood');
+                            if (typeof updateContinueButton === 'function') updateContinueButton();
+                        });
+                        inputManualNeighborhood.style.display = 'none';
+                        inputManualNeighborhood.parentNode.insertBefore(select, inputManualNeighborhood.nextSibling);
+                    }
+                }
+
+                function tryPopulateNeighborhoodSelects() {
+                    const names = extractNeighborhoodNames();
+                    if (!names) return false;
+                    const selCep = document.getElementById('neighborhood-select');
+                    const selManual = document.getElementById('manual-neighborhood-select');
+                    if (selCep) populateSelectOptions(selCep, names);
+                    if (selManual) populateSelectOptions(selManual, names);
+                    return !!(selCep || selManual);
+                }
+
+                function applyFixedLocal() {
+                    const cepEl = document.getElementById('cep');
+                    const cityEl = document.getElementById('city');
+                    const manualCityEl = document.getElementById('manual-city');
+                    if (LOCAL_LOCK_ENABLED) {
+                        if (cepEl) { cepEl.value = (typeof LOCAL_LOCK_CEP !== 'undefined' ? LOCAL_LOCK_CEP : '') || ''; cepEl.readOnly = true; }
+                        if (cityEl) { cityEl.value = (typeof LOCAL_LOCK_CIDADE !== 'undefined' ? LOCAL_LOCK_CIDADE : '') || ''; cityEl.readOnly = true; }
+                        if (manualCityEl) { manualCityEl.value = (typeof LOCAL_LOCK_CIDADE !== 'undefined' ? LOCAL_LOCK_CIDADE : '') || ''; manualCityEl.readOnly = true; }
+                    } else {
+                        if (cepEl) cepEl.readOnly = false;
+                        if (cityEl) cityEl.readOnly = false;
+                        if (manualCityEl) manualCityEl.readOnly = false;
+                    }
+                }
+
+                const observer = new MutationObserver(() => {
+                    applyFixedLocal();
+                    ensureNeighborhoodSelects();
+                    tryPopulateNeighborhoodSelects();
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+
+                applyFixedLocal();
+                ensureNeighborhoodSelects();
+                let attempts = 0;
+                const interval = setInterval(() => {
+                    const done = tryPopulateNeighborhoodSelects();
+                    attempts++;
+                    if (done || attempts > 20) clearInterval(interval);
+                }, 100);
+            });
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- QR Code Library -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
@@ -2997,67 +3122,77 @@
                 applyConfiguration();
                 updateProgress(20);
 
-                // Load categories data
-                infoLog('Loading categories data...');
-                categoriesData = await loadCSVData(CATEGORIES_CSV_URL);
-                updateProgress(40);
+                // Load core CSVs concurrently for speed
+                infoLog('Loading data concurrently...');
+                const categoriesPromise = loadCSVData(CATEGORIES_CSV_URL);
+                const menuPromise = loadCSVData(MENU_CSV_URL);
+                const hoursPromise = loadCSVData(HOURS_CSV_URL);
+                const neighborhoodsPromise = (async () => {
+                    try {
+                        const raw = await loadCSVData(NEIGHBORHOODS_CSV_URL);
+                        let mapped = raw.map(row => ({
+                            bairro: (row.bairro || row.nome_bairro || row.Bairro || row.BAIRRO || '').trim().toLowerCase(),
+                            taxa: parseFloat((row.taxa || row.valor_taxa || row.Taxa || row.TAXA || '0').toString().replace(',', '.')) || 0
+                        })).filter(item => item.bairro);
+                        return mapped;
+                    } catch (error) {
+                        errorLog('❌ Error loading neighborhoods:', error.message);
+                        return [];
+                    }
+                })();
+                const couponsPromise = (async () => {
+                    try {
+                        const data = await loadCSVData(COUPONS_CSV_URL);
+                        return data;
+                    } catch (error) {
+                        errorLog('❌ Error loading coupons:', error.message);
+                        return [];
+                    }
+                })();
 
-                // Load menu items data
-                infoLog('Loading menu items data...');
-                const menuItems = await loadCSVData(MENU_CSV_URL);
-                updateProgress(65);
+                // Track progress as each settles
+                let progress = 20; // after config + apply
+                const bump = inc => { progress = Math.min(95, progress + inc); updateProgress(progress); };
+                categoriesPromise.then(() => bump(20)).catch(() => bump(5));
+                menuPromise.then(() => bump(25)).catch(() => bump(5));
+                hoursPromise.then(() => bump(15)).catch(() => bump(5));
+                neighborhoodsPromise.then(() => bump(10)).catch(() => bump(0));
+                couponsPromise.then(() => bump(5)).catch(() => bump(0));
 
-                // Load hours data
-                infoLog('Loading hours data...');
-                hoursData = await loadCSVData(HOURS_CSV_URL);
+                const [categoriesResult, menuItems, hoursResult, neighborhoodsResult, couponsResult] = await Promise.all([
+                    categoriesPromise,
+                    menuPromise,
+                    hoursPromise,
+                    neighborhoodsPromise,
+                    couponsPromise
+                ]);
+
+                // Assign resolved data
+                categoriesData = categoriesResult || [];
+                hoursData = hoursResult || [];
+                couponsData = couponsResult || [];
+                neighborhoodsData = neighborhoodsResult || [];
                 debugLog('Hours data loaded:', hoursData.length, 'entries');
-                
+
                 if (hoursData.length > 0) {
-                    // Inicializar timezone global
                     debugLog('🚀 Initializing global timezone...');
                     initializeGlobalTimezone();
-                    
-                    // Verificar se timezone foi configurado corretamente
                     if (globalTimezone) {
                         debugLog('✅ Timezone system initialized:', globalTimezone);
                     } else {
                         warnLog('❌ Timezone system not configured properly');
                     }
                 }
-                updateProgress(80);
 
-                // Load neighborhoods data for delivery fees
-                debugLog('🏠️ Loading neighborhoods data...');
+                // Expose neighborhoods globally and prepare autocomplete
                 try {
-                    neighborhoodsData = await loadCSVData(NEIGHBORHOODS_CSV_URL);
-                    // Process neighborhoods data - mapear para formato consistente
-                    neighborhoodsData = neighborhoodsData.map(row => ({
-                        // Tentar várias possibilidades de nomes de colunas
-                        bairro: (row.bairro || row.nome_bairro || row.Bairro || row.BAIRRO || '').trim().toLowerCase(),
-                        taxa: parseFloat((row.taxa || row.valor_taxa || row.Taxa || row.TAXA || '0').toString().replace(',', '.')) || 0
-                    })).filter(item => item.bairro); // Remove empty entries
-                    
-                    // Expor dados globalmente para acesso em outras funções
                     window.neighborhoodsData = neighborhoodsData;
-                    
-                    // Preparar lista para autocomplete
                     prepareNeighborhoodsAutocomplete();
-                    
                     infoLog(`✅ Neighborhoods loaded:`, neighborhoodsData.length, 'items');
-                } catch (error) {
-                    errorLog('❌ Error loading neighborhoods:', error.message);
-                    neighborhoodsData = []; // Fallback to empty array
+                } catch (e) {
+                    errorLog('❌ Neighborhoods post-processing error:', e.message);
                 }
-                
-                // Load coupons data
-                debugLog('🎟️ Loading coupons data...');
-                try {
-                    couponsData = await loadCSVData(COUPONS_CSV_URL);
-                    infoLog(`✅ Coupons loaded:`, couponsData.length, 'items');
-                } catch (error) {
-                    errorLog('❌ Error loading coupons:', error.message);
-                    couponsData = []; // Fallback to empty array
-                }
+
                 updateProgress(85);
 
                 // Process and organize data

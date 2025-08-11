@@ -266,3 +266,20 @@ function groupLog(label, fn) {
     return result;
 }
 
+// ====================================================================
+// FIXED LOCATION CONFIGURATION
+// ====================================================================
+
+/**
+ * LOCAL_LOCK_ENABLED:
+ * - true  → Locks ZIP code (CEP) and City with the defined values
+ * - false → CEP and City fields are free for editing
+ */
+const LOCAL_LOCK_ENABLED = true;
+
+/**
+ * Default values when LOCAL_LOCK_ENABLED = true
+ */
+const LOCAL_LOCK_CEP = '57230000';
+const LOCAL_LOCK_CIDADE = 'Coruripe-AL';
+
